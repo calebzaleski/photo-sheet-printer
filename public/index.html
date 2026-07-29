@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Sheet Printer</title>
+<meta name="description" content="Arrange photos into a printable grid and export a PDF, with the original image data embedded untouched. Runs entirely in your browser.">
+<meta name="color-scheme" content="light dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f6fed'/%3E%3Cg fill='%23fff'%3E%3Crect x='7' y='7' width='5' height='5' rx='1'/%3E%3Crect x='13.5' y='7' width='5' height='5' rx='1'/%3E%3Crect x='20' y='7' width='5' height='5' rx='1'/%3E%3Crect x='7' y='13.5' width='5' height='5' rx='1'/%3E%3Crect x='13.5' y='13.5' width='5' height='5' rx='1'/%3E%3Crect x='20' y='13.5' width='5' height='5' rx='1'/%3E%3Crect x='7' y='20' width='5' height='5' rx='1'/%3E%3Crect x='13.5' y='20' width='5' height='5' rx='1'/%3E%3Crect x='20' y='20' width='5' height='5' rx='1'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>Photo Sheet Printer</h1>
+      <p class="tagline">Nine photos, one sheet, nothing thrown away.</p>
+    </div>
+  </div>
+  <p class="privacy" role="note">Your photos never leave this tab — there is no server to send them to.</p>
+</header>
+
+<!-- app.js removes this on boot. It only stays visible when the scripts never
+     ran, which almost always means the page was opened straight from Finder:
+     under file:// the "script-src 'self'" policy has no origin to match. -->
+<div id="bootcheck" class="bootcheck">
+  <strong>This page needs to be served over HTTP.</strong>
+  It looks like you opened <code>index.html</code> directly from your file manager,
+  and the browser's security policy blocked the scripts. From the project folder run
+  <code>docker compose up</code> and open <code>http://localhost:8080</code>, or run
+  <code>python3 -m http.server 8080 --directory public</code>. See the README.
+</div>
+
+<main class="layout">
+
+  <aside class="panel" aria-label="Sheet settings">
+
+    <section class="group">
+      <h2>Photos</h2>
+      <div class="row">
+        <button type="button" id="pick" class="btn btn-primary">Add photos…</button>
+        <input type="file" id="file" accept="image/*" multiple hidden>
+      </div>
+      <div class="row">
+        <button type="button" id="repeat" class="btn">Repeat to fill</button>
+        <button type="button" id="clear" class="btn">Clear</button>
+      </div>
+      <p class="hint" id="count">No photos yet. Drop them anywhere on this page.</p>
+    </section>
+
+    <section class="group">
+      <h2>Sheet</h2>
+      <label class="field">
+        <span>Paper</span>
+        <select id="page"></select>
+      </label>
+      <label class="field">
+        <span>Orientation</span>
+        <select id="orientation">
+          <option value="portrait">Portrait</option>
+          <option value="landscape">Landscape</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Units</span>
+        <select id="unit">
+          <option value="in">Inches</option>
+          <option value="mm">Millimetres</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="group">
+      <h2>Grid</h2>
+      <div class="field-pair">
+        <label class="field">
+          <span>Columns</span>
+          <input type="number" id="cols" min="1" max="10" step="1" value="3">
+        </label>
+        <label class="field">
+          <span>Rows</span>
+          <input type="number" id="rows" min="1" max="10" step="1" value="3">
+        </label>
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>Photo size</h2>
+      <label class="field">
+        <span>Sizing</span>
+        <select id="sizing">
+          <option value="aspect">Keep a shape, fit the page</option>
+          <option value="exact">Exact print size</option>
+          <option value="fill">Fill the page evenly</option>
+        </select>
+      </label>
+
+      <div id="aspect-fields">
+        <label class="field">
+          <span>Shape</span>
+          <select id="aspect-preset">
+            <option value="3:4">Portrait 3:4</option>
+            <option value="4:3">Landscape 4:3</option>
+            <option value="2:3">Portrait 2:3</option>
+            <option value="3:2">Landscape 3:2</option>
+            <option value="1:1">Square 1:1</option>
+            <option value="5:7">Portrait 5:7</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </label>
+        <div class="field-pair" id="aspect-custom" hidden>
+          <label class="field">
+            <span>Width</span>
+            <input type="number" id="aspect-w" min="1" step="0.01" value="3">
+          </label>
+          <label class="field">
+            <span>Height</span>
+            <input type="number" id="aspect-h" min="1" step="0.01" value="4">
+          </label>
+        </div>
+      </div>
+
+      <div id="exact-fields" hidden>
+        <label class="field">
+          <span>Preset</span>
+          <select id="cell-preset"></select>
+        </label>
+        <div class="field-pair">
+          <label class="field">
+            <span>Width <em class="unit-label">in</em></span>
+            <input type="number" id="cell-w" min="0.25" step="0.05" value="2.5">
+          </label>
+          <label class="field">
+            <span>Height <em class="unit-label">in</em></span>
+            <input type="number" id="cell-h" min="0.25" step="0.05" value="3.5">
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>Spacing</h2>
+      <div class="field-pair">
+        <label class="field">
+          <span>Margin <em class="unit-label">in</em></span>
+          <input type="number" id="margin" min="0" step="0.05" value="0.25">
+        </label>
+        <label class="field">
+          <span>Gap <em class="unit-label">in</em></span>
+          <input type="number" id="gap" min="0" step="0.05" value="0.1">
+        </label>
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>Options</h2>
+      <label class="field">
+        <span>Framing</span>
+        <select id="fit">
+          <option value="contain">Show the whole photo</option>
+          <option value="cover">Fill the cell (crops edges)</option>
+        </select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="cutmarks"> <span>Cut marks in the page margins</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="borders"> <span>Thin border around each photo</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="background" checked> <span>Paint the page white</span>
+      </label>
+    </section>
+
+    <section class="group">
+      <h2>Export</h2>
+      <button type="button" id="export" class="btn btn-primary btn-block" disabled>Download PDF</button>
+      <p class="hint" id="status" role="status" aria-live="polite"></p>
+    </section>
+
+  </aside>
+
+  <section class="stage" aria-label="Sheet preview">
+    <div class="stage-head">
+      <h2 id="stage-title">Preview</h2>
+      <p class="hint" id="stage-note">Drag photos between cells to reorder them.</p>
+    </div>
+    <div id="sheets" class="sheets"></div>
+  </section>
+
+</main>
+
+<div id="dropveil" class="dropveil" hidden><span>Drop photos to add them</span></div>
+
+<script src="js/image-source.js"></script>
+<script src="js/layout.js"></script>
+<script src="js/pdf.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

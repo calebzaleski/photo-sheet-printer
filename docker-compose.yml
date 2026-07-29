@@ -1,0 +1,19 @@
+services:
+  photo-sheet-printer:
+    build: .
+    image: photo-sheet-printer
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+    # The container serves four static files and writes nothing, so it can be
+    # locked down hard. If you add anything that needs to write, these are the
+    # lines to revisit.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

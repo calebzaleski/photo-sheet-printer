@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Sheet Printer — tests</title>
+<style>
+body { font: 14px/1.6 -apple-system, system-ui, sans-serif; margin: 0; padding: 24px; max-width: 900px; }
+h1 { font-size: 19px; margin: 0 0 4px; }
+p.sub { margin: 0 0 18px; color: #666; }
+#summary { font-size: 16px; font-weight: 600; padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; }
+.green { background: #e5f6ec; color: #0f7b46; }
+.red   { background: #fdeaea; color: #c02a2a; }
+.grey  { background: #eef0f3; color: #555; }
+ol { padding-left: 22px; margin: 0; }
+li { margin: 2px 0; }
+li.p::marker { color: #0f7b46; }
+li.f { color: #c02a2a; font-weight: 600; }
+code { background: #eef0f3; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #666; margin: 20px 0 6px; }
+</style>
+</head>
+<body>
+
+<h1>Photo Sheet Printer — tests</h1>
+<p class="sub">Fixtures are generated in the browser, so this page needs no test files. Serve the project and open <code>/tests/</code>.</p>
+<div id="summary" class="grey">running…</div>
+<div id="groups"></div>
+
+<script src="../public/js/image-source.js"></script>
+<script src="../public/js/layout.js"></script>
+<script src="../public/js/pdf.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var groups = [];
+  var current = null;
+  var passed = 0, failed = 0;
+
+  function group(name) {
+    current = { name: name, items: [] };
+    groups.push(current);
+  }
+
+  function check(name, cond, detail) {
+    if (cond) passed++; else failed++;
+    current.items.push({ name: name, ok: !!cond, detail: detail });
+  }
+
+  function draw() {
+    var host = document.getElementById('groups');
+    host.textContent = '';
+    groups.forEach(function (g) {
+      var h = document.createElement('h2');
+      h.textContent = g.name;
+      host.appendChild(h);
+      var ol = document.createElement('ol');
+      g.items.forEach(function (it) {
+        var li = document.createElement('li');
+        li.className = it.ok ? 'p' : 'f';
+        li.textContent = it.name + (it.detail != null ? '  — ' + it.detail : '');
+        ol.appendChild(li);
+      });
+      host.appendChild(ol);
+    });
+    var s = document.getElementById('summary');
+    s.textContent = passed + ' passed, ' + failed + ' failed';
+    s.className = failed ? 'red' : 'green';
+  }
+
+  /* ------------------------------------------------------------ fixtures */
+
+  // An asymmetric picture: dark bar across the top, white square top-left.
+  // Any orientation mistake shows up as those landing in the wrong place.
+  function paint(w, h) {
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var x = c.getContext('2d');
+    var grad = x.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, '#4a9d5f');
+    grad.addColorStop(1, '#2c5f39');
+    x.fillStyle = grad;
+    x.fillRect(0, 0, w, h);
+    x.fillStyle = '#141414';
+    x.fillRect(0, 0, w, Math.max(1, h / 10));
+    x.fillStyle = '#ffffff';
+    x.fillRect(0, 0, Math.min(w, h) / 5, Math.min(w, h) / 5);
+    return c;
+  }
+
+  function toFile(canvas, type, name) {
+    return new Promise(function (res) {
+      canvas.toBlob(function (b) { res(new File([b], name, { type: type })); }, type, 0.95);
+    });
+  }
+
+  // Splice a minimal Exif APP1 carrying just an orientation tag in after SOI.
+  function withOrientation(bytes, orientation) {
+    var payload = [];
+    'Exif'.split('').forEach(function (ch) { payload.push(ch.charCodeAt(0)); });
+    payload.push(0, 0);
+    payload.push(0x4D, 0x4D, 0x00, 0x2A, 0, 0, 0, 8);       // big-endian TIFF, IFD at 8
+    payload.push(0, 1);                                      // one entry
+    payload.push(0x01, 0x12, 0, 3, 0, 0, 0, 1);              // tag 0x0112, SHORT, count 1
+    payload.push((orientation >> 8) & 0xFF, orientation & 0xFF, 0, 0);
+    payload.push(0, 0, 0, 0);                                // no next IFD
+
+    var len = payload.length + 2;
+    var seg = [0xFF, 0xE1, (len >> 8) & 0xFF, len & 0xFF].concat(payload);
+
+    var out = new Uint8Array(bytes.length + seg.length);
+    out.set(bytes.subarray(0, 2), 0);
+    out.set(new Uint8Array(seg), 2);
+    out.set(bytes.subarray(2), 2 + seg.length);
+    return out;
+  }
+
+  function fileFromBytes(bytes, name, type) {
+    return new File([bytes], name, { type: type });
+  }
+
+  var crcTable = (function () {
+    var t = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function crc32(bytes) {
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) {
+      c = crcTable[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    }
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function chunk(type, data) {
+    var out = new Uint8Array(12 + data.length);
+    var dv = new DataView(out.buffer);
+    dv.setUint32(0, data.length);
+    for (var i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+    out.set(data, 8);
+    dv.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+    return out;
+  }
+
+  // canvas.toBlob('image/png') always writes RGBA, which correctly takes the
+  // decode path. Testing IDAT passthrough needs a genuinely opaque PNG, so
+  // build a colour-type-2 one by hand.
+  function makeOpaquePNG(w, h) {
+    var stride = 1 + w * 3;
+    var raw = new Uint8Array(h * stride);
+    for (var y = 0; y < h; y++) {
+      var row = y * stride;
+      raw[row] = 0;                                  // filter: none
+      for (var x = 0; x < w; x++) {
+        var p = row + 1 + x * 3;
+        var top = y < h / 10;
+        var corner = x < w / 5 && y < h / 5;
+        if (corner)   { raw[p] = 255; raw[p + 1] = 255; raw[p + 2] = 255; }
+        else if (top) { raw[p] = 20;  raw[p + 1] = 20;  raw[p + 2] = 20; }
+        else {
+          raw[p] = 74;
+          raw[p + 1] = 157 - ((y / h) * 60) | 0;
+          raw[p + 2] = 95;
+        }
+      }
+    }
+    return ImageSource.deflate(raw).then(function (z) {
+      if (!z) throw new Error('CompressionStream unavailable');
+      var ihdr = new Uint8Array(13);
+      var dv = new DataView(ihdr.buffer);
+      dv.setUint32(0, w);
+      dv.setUint32(4, h);
+      ihdr[8] = 8;   // bit depth
+      ihdr[9] = 2;   // colour type 2 = truecolour, no alpha
+      ihdr[10] = 0;  // deflate
+      ihdr[11] = 0;  // adaptive filtering
+      ihdr[12] = 0;  // non-interlaced
+      var sig = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+      var parts = [sig, chunk('IHDR', ihdr), chunk('IDAT', z), chunk('IEND', new Uint8Array(0))];
+      var total = parts.reduce(function (a, p) { return a + p.length; }, 0);
+      var out = new Uint8Array(total), at = 0;
+      parts.forEach(function (p) { out.set(p, at); at += p.length; });
+      return fileFromBytes(out, 'opaque.png', 'image/png');
+    });
+  }
+
+  function bytesEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function asString(bytes) {
+    var s = '', CH = 0x8000;
+    for (var i = 0; i < bytes.length; i += CH) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+    }
+    return s;
+  }
+
+  /* --------------------------------------------------------------- tests */
+
+  function run() {
+    var portrait = paint(600, 800);
+    var landscape = paint(800, 600);
+    var jpegFile, jpegBytes, pngFile;
+
+    return toFile(portrait, 'image/jpeg', 'p.jpg').then(function (f) {
+      jpegFile = f;
+      return f.arrayBuffer();
+    }).then(function (buf) {
+      jpegBytes = new Uint8Array(buf);
+      return ImageSource.fromFile(jpegFile);
+    }).then(function (src) {
+
+      group('JPEG is copied, not re-encoded');
+      check('stored as a DCTDecode stream', src.filter === 'DCTDecode', src.filter);
+      check('flagged as not re-encoded', src.reEncoded === false);
+      check('stored bytes are identical to the file',
+            bytesEqual(src.data, jpegBytes),
+            src.data.length + ' vs ' + jpegBytes.length + ' bytes');
+      check('dimensions read from the SOF marker',
+            src.pixelWidth === 600 && src.pixelHeight === 800,
+            src.pixelWidth + '×' + src.pixelHeight);
+
+      return makeOpaquePNG(600, 800);
+    }).then(function (f) {
+      pngFile = f;
+      return ImageSource.fromFile(f);
+    }).then(function (src) {
+
+      group('PNG IDAT is copied, not re-encoded');
+      check('stored as a FlateDecode stream', src.filter === 'FlateDecode', src.filter);
+      check('flagged as not re-encoded', src.reEncoded === false);
+      check('uses the PNG row predictor',
+            src.decodeParms && src.decodeParms.Predictor === 15,
+            src.decodeParms && src.decodeParms.Predictor);
+      check('predictor width matches the image',
+            src.decodeParms && src.decodeParms.Columns === src.pixelWidth,
+            src.decodeParms && src.decodeParms.Columns);
+      check('smaller than raw RGB, so it really is still compressed',
+            src.data.length < 600 * 800 * 3,
+            src.data.length + ' bytes');
+
+      // A PNG with an alpha channel cannot be handed to PDF as-is, so it must
+      // take the decode path instead of being silently mis-embedded.
+      return toFile(portrait, 'image/png', 'rgba.png')
+        .then(function (af) { return ImageSource.fromFile(af); })
+        .then(function (raster) {
+          group('PNG with alpha falls back to decoding');
+          check('takes the raster path', raster.kind === 'raw', raster.kind);
+          check('is flagged as re-encoded', raster.reEncoded === true);
+          check('keeps its full pixel dimensions',
+                raster.pixelWidth === 600 && raster.pixelHeight === 800,
+                raster.pixelWidth + '×' + raster.pixelHeight);
+          check('is still stored losslessly', raster.filter === 'FlateDecode', raster.filter);
+        });
+
+      // ---- EXIF orientation, all eight values
+    }).then(function () {
+      return toFile(landscape, 'image/jpeg', 'l.jpg').then(function (lf) {
+        return lf.arrayBuffer();
+      }).then(function (buf) {
+        var base = new Uint8Array(buf);
+        var jobs = [];
+        for (var o = 1; o <= 8; o++) {
+          (function (o) {
+            jobs.push(ImageSource.fromFile(
+              fileFromBytes(withOrientation(base, o), 'o' + o + '.jpg', 'image/jpeg')
+            ).then(function (s) { return { o: o, s: s }; }));
+          })(o);
+        }
+        return Promise.all(jobs);
+      });
+    }).then(function (all) {
+
+      group('EXIF orientation');
+      all.forEach(function (r) {
+        var swaps = r.o >= 5;
+        check('orientation ' + r.o + ' is read back',
+              r.s.orientation === r.o, 'got ' + r.s.orientation);
+        check('orientation ' + r.o + ' display size ' + (swaps ? '600×800' : '800×600'),
+              r.s.displayWidth === (swaps ? 600 : 800) &&
+              r.s.displayHeight === (swaps ? 800 : 600),
+              r.s.displayWidth + '×' + r.s.displayHeight);
+        check('orientation ' + r.o + ' leaves the pixels alone',
+              r.s.pixelWidth === 800 && r.s.pixelHeight === 600,
+              r.s.pixelWidth + '×' + r.s.pixelHeight);
+      });
+
+      // ---- layout
+      group('Grid geometry');
+      var L = Layout.compute({
+        page: 'letter', orientation: 'portrait', unit: 'in',
+        rows: 3, cols: 3, margin: 0.25, gap: 0.1,
+        sizing: 'aspect', aspectW: 3, aspectH: 4
+      });
+      check('Letter is 612×792 points', L.width === 612 && L.height === 792,
+            L.width + '×' + L.height);
+      check('3×3 makes nine cells', L.cells.length === 9, L.cells.length);
+      check('cells hold a 3:4 shape', Math.abs(L.cellW / L.cellH - 0.75) < 1e-9,
+            (L.cellW / L.cellH).toFixed(6));
+      check('the grid fits the page', !L.overflows);
+
+      var gap = 0.1 * 72;
+      var gridW = 3 * L.cellW + 2 * gap;
+      var gridH = 3 * L.cellH + 2 * gap;
+      check('grid is centred horizontally',
+            Math.abs(L.cells[0].x - (612 - gridW) / 2) < 1e-9,
+            'left ' + L.cells[0].x.toFixed(2) + ', right ' +
+            (612 - L.cells[0].x - gridW).toFixed(2));
+      check('grid is centred vertically',
+            Math.abs(L.cells[0].y - (792 - gridH) / 2) < 1e-9,
+            'top ' + L.cells[0].y.toFixed(2));
+      check('columns are evenly spaced',
+            Math.abs((L.cells[1].x - L.cells[0].x) - (L.cellW + gap)) < 1e-9);
+      check('rows are evenly spaced',
+            Math.abs((L.cells[3].y - L.cells[0].y) - (L.cellH + gap)) < 1e-9);
+
+      var exact = Layout.compute({
+        page: 'letter', orientation: 'portrait', unit: 'in',
+        rows: 3, cols: 3, margin: 0.25, gap: 0.1,
+        sizing: 'exact', cellW: 2.5, cellH: 3.5
+      });
+      check('exact sizing gives 2.5×3.5in = 180×252pt',
+            Math.abs(exact.cellW - 180) < 1e-9 && Math.abs(exact.cellH - 252) < 1e-9,
+            exact.cellW + '×' + exact.cellH);
+      check('nine wallet prints are flagged as not fitting Letter',
+            exact.overflows === true);
+
+      var mm = Layout.compute({
+        page: 'a4', orientation: 'portrait', unit: 'mm',
+        rows: 2, cols: 2, margin: 10, gap: 5,
+        sizing: 'exact', cellW: 50, cellH: 50
+      });
+      check('millimetres convert correctly (50mm = 141.73pt)',
+            Math.abs(mm.cellW - 50 * 72 / 25.4) < 1e-9, mm.cellW.toFixed(3));
+
+      group('Print resolution');
+      check('600px across 2in is 300ppi',
+            Math.abs(Layout.effectiveDPI({ displayWidth: 600, displayHeight: 800 }, 0,
+                                         { w: 144, h: 192 }, 'contain') - 300) < 1e-9);
+      check('rotating swaps which edge constrains the fit',
+            Math.abs(Layout.effectiveDPI({ displayWidth: 600, displayHeight: 800 }, 90,
+                                         { w: 192, h: 144 }, 'contain') - 300) < 1e-9);
+
+      // ---- PDF structure
+      group('PDF output');
+      var cells = L.cells.map(function (c) {
+        return { x: c.x, y: c.y, w: c.w, h: c.h, item: { source: all[0].s, rotation: 0 } };
+      });
+      var pdf = PDFSheet.render([{ width: L.width, height: L.height, cells: cells }],
+                                { fit: 'contain', background: true, cutMarks: true });
+      var text = asString(pdf);
+
+      check('starts with a PDF header', text.indexOf('%PDF-1.7') === 0);
+      check('ends with %%EOF', /%%EOF\s*$/.test(text));
+      check('declares one page', /\/Type \/Pages \/Count 1\b/.test(text));
+      check('startxref points inside the file', (function () {
+        var m = text.match(/startxref\s+(\d+)/);
+        return m && +m[1] > 0 && +m[1] < pdf.length;
+      })());
+      check('xref offsets land on their objects', (function () {
+        var m = text.match(/startxref\s+(\d+)/);
+        if (!m) return false;
+        var xref = text.slice(+m[1]);
+        var rows = xref.match(/^(\d{10}) 00000 n/gm) || [];
+        if (!rows.length) return false;
+        return rows.every(function (row, i) {
+          var at = parseInt(row.slice(0, 10), 10);
+          return new RegExp('^' + (i + 1) + ' 0 obj').test(text.slice(at));
+        });
+      })());
+      check('every stream Length matches its bytes', (function () {
+        var re = /\/Length (\d+) >>\s*\nstream\n/g, m;
+        var ok = true;
+        while ((m = re.exec(text))) {
+          var start = m.index + m[0].length;
+          if (text.slice(start + (+m[1]), start + (+m[1]) + 10).indexOf('endstream') < 0) ok = false;
+        }
+        return ok;
+      })());
+      check('the photo appears once even though nine cells use it',
+            (text.match(/\/Subtype \/Image/g) || []).length === 1,
+            (text.match(/\/Subtype \/Image/g) || []).length + ' image objects');
+
+      // The regression that produced a valid 40 MB PDF of blank white paper.
+      group('ICC colour profiles');
+      var fake = {
+        pixelWidth: 10, pixelHeight: 10, displayWidth: 10, displayHeight: 10,
+        orientation: 1, colorSpace: 'DeviceRGB', bitsPerComponent: 8,
+        data: new Uint8Array([1, 2, 3, 4]), filter: 'DCTDecode',
+        decodeParms: null, decodeArray: null,
+        icc: { data: new Uint8Array(128), n: 3 }
+      };
+      var iccPdf = asString(PDFSheet.render([{
+        width: 200, height: 200,
+        cells: [{ x: 0, y: 0, w: 100, h: 100, item: { source: fake, rotation: 0 } }]
+      }], { fit: 'contain', background: true }));
+
+      check('ICCBased space is written as an array',
+            /\/ColorSpace \[\/ICCBased \d+ 0 R\]/.test(iccPdf),
+            (iccPdf.match(/\/ColorSpace [^\n]{0,30}/) || ['missing'])[0]);
+      check('no colour space is a bare object reference',
+            !/\/ColorSpace \d+ 0 R/.test(iccPdf));
+      check('the profile stream declares its component count',
+            /\/N 3 \/Alternate \/DeviceRGB/.test(iccPdf));
+
+      var grayPdf = asString(PDFSheet.render([{
+        width: 200, height: 200,
+        cells: [{ x: 0, y: 0, w: 100, h: 100, item: { source: Object.assign({}, fake, {
+          colorSpace: 'DeviceGray', icc: { data: new Uint8Array(64), n: 1 }
+        }), rotation: 0 } }]
+      }], { fit: 'contain' }));
+      check('a 1-component profile falls back to DeviceGray',
+            /\/N 1 \/Alternate \/DeviceGray/.test(grayPdf));
+    });
+  }
+
+  run().then(draw).catch(function (e) {
+    group('harness');
+    check('the suite ran to completion', false, (e && e.message) || String(e));
+    draw();
+    if (e && e.stack) console.error(e);
+  });
+})();
+</script>
+</body>
+</html>
