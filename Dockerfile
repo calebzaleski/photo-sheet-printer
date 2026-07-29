@@ -1,8 +1,10 @@
 # A static site, so there is nothing to build — just nginx and four files.
 #
-# nginx-unprivileged runs as a non-root user and listens on 8080, which lets
-# the container run with a read-only root filesystem and no capabilities.
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+# nginx-unprivileged runs as a non-root user on an unprivileged port, which
+# lets the container run with a read-only root filesystem and no capabilities.
+# Bump this tag periodically: the CVEs that show up here are almost always in
+# base-image packages (openssl, nghttp2, busybox), not in anything we wrote.
+FROM nginxinc/nginx-unprivileged:1.29-alpine
 
 LABEL org.opencontainers.image.title="photo-sheet-printer" \
       org.opencontainers.image.description="Arrange photos into a printable grid and export a PDF with the original image data embedded untouched." \
