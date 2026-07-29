@@ -15,7 +15,7 @@ COPY public/           /usr/share/nginx/html/
 # must agree: `listen` in docker/nginx.conf, EXPOSE here, and the healthcheck
 # below. It must stay above 1024, because the base image runs as non-root and
 # cannot bind privileged ports. Point Coolify's "Ports Exposes" at this number.
-EXPOSE 8081
+EXPOSE  8081
 
 # busybox wget ships with the alpine image; there is no curl.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
