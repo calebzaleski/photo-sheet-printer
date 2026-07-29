@@ -3,7 +3,7 @@ services:
     build: .
     image: photo-sheet-printer
     ports:
-      - "8080:8080"
+      - "8081:8080"
     restart: unless-stopped
 
     # The container serves four static files and writes nothing, so it can be
