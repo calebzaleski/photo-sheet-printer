@@ -1,3 +1,7 @@
+# About
+I had a problem. I wanted to print out 9 little photos on one 8.5x11 sheet and maintain the ratios so that they would fit in frames but NO WHERE could I find a program or website to do it, so I turned to my little friend AI. Everything here is written by Claude Code so it may contain bugs and weird bits and bobs but it WORKS and it took me only 30 minutes to do. Hopefully you can get some use out of it as well!
+
+
 # Photo Sheet Printer
 
 Arrange photos into a grid on one printable sheet and export a PDF — without
