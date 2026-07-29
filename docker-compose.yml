@@ -4,6 +4,15 @@ services:
     image: photo-sheet-printer
     restart: unless-stopped
 
+    # Deliberately no `ports:` block. A host port mapping puts the container
+    # outside the reverse proxy's control, which is what stops Coolify (and
+    # most other PaaS proxies) from offering to attach a domain. nginx listens
+    # on 8080, so assign the domain there as https://your.domain:8080 — the
+    # port only tells the proxy where to route; the public URL stays clean.
+    #
+    # To browse it locally instead, publish the port yourself:
+    #   docker compose run --rm --publish 8081:8080 photo-sheet-printer
+
     # The container serves four static files and writes nothing, so it can be
     # locked down hard. If you add anything that needs to write, these are the
     # lines to revisit.
