@@ -64,13 +64,13 @@ docker build -t photo-sheet-printer .
 ```
 
 ```bash
-docker run --rm -p 8080:8080 photo-sheet-printer
+docker run --rm -p 8080:8081 photo-sheet-printer
 ```
 
 Then open <http://localhost:8080>.
 
 The image is the whole deployment story — there is no compose file. nginx
-listens on **8080** inside the container, declared in three places that must
+listens on **8081** inside the container, declared in three places that must
 agree: `listen` in `docker/nginx.conf`, `EXPOSE` in the `Dockerfile`, and the
 healthcheck. It has to stay above 1024, because the image runs as a non-root
 user and cannot bind privileged ports.
@@ -78,7 +78,7 @@ user and cannot bind privileged ports.
 To run it the way you would in production, with the container locked down:
 
 ```bash
-docker run --rm -p 8080:8080 --read-only --tmpfs /tmp --tmpfs /var/cache/nginx --cap-drop ALL --security-opt no-new-privileges:true photo-sheet-printer
+docker run --rm -p 8080:8081 --read-only --tmpfs /tmp --tmpfs /var/cache/nginx --cap-drop ALL --security-opt no-new-privileges:true photo-sheet-printer
 ```
 
 ### Without Docker
@@ -123,11 +123,13 @@ combination, not of the photo.
 
 Point it at this repo and choose the **Dockerfile** build pack, then set:
 
-- **Ports Exposes / container port** → `8080`
+- **Ports Exposes / container port** → `8081`
 - **Domain** → whatever you are hosting it on
 
 The platform's reverse proxy terminates TLS and forwards to container port
-8080. Two things that reliably go wrong:
+8081. If this number and nginx's `listen` disagree, the proxy dials a port
+nothing is listening on and you get a **502** — that is the whole meaning of
+that error here. Two other things that reliably go wrong:
 
 **Do not publish a host port.** A `ports:` mapping or an equivalent "port
 mapping" setting puts the container outside the proxy's control, and most
