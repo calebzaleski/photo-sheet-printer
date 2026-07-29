@@ -11,8 +11,12 @@ LABEL org.opencontainers.image.title="photo-sheet-printer" \
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY public/           /usr/share/nginx/html/
 
-EXPOSE 8081
+# The internal port is arbitrary, but it is declared in three places and they
+# must agree: `listen` in docker/nginx.conf, EXPOSE here, and the healthcheck
+# below. It must stay above 1024, because the base image runs as non-root and
+# cannot bind privileged ports. Point Coolify's "Ports Exposes" at this number.
+EXPOSE 8080
 
 # busybox wget ships with the alpine image; there is no curl.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1:8081/ || exit 1
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1
