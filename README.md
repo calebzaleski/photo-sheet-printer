@@ -60,10 +60,26 @@ tell you so rather than showing a blank screen.
 ### Docker
 
 ```bash
-docker compose up
+docker build -t photo-sheet-printer .
+```
+
+```bash
+docker run --rm -p 8080:8080 photo-sheet-printer
 ```
 
 Then open <http://localhost:8080>.
+
+The image is the whole deployment story — there is no compose file. nginx
+listens on **8080** inside the container, declared in three places that must
+agree: `listen` in `docker/nginx.conf`, `EXPOSE` in the `Dockerfile`, and the
+healthcheck. It has to stay above 1024, because the image runs as a non-root
+user and cannot bind privileged ports.
+
+To run it the way you would in production, with the container locked down:
+
+```bash
+docker run --rm -p 8080:8080 --read-only --tmpfs /tmp --tmpfs /var/cache/nginx --cap-drop ALL --security-opt no-new-privileges:true photo-sheet-printer
+```
 
 ### Without Docker
 
@@ -102,6 +118,32 @@ combination, not of the photo.
 ---
 
 ## Deploying it to your own site
+
+### On a PaaS (Coolify, Dokploy, Railway, Render)
+
+Point it at this repo and choose the **Dockerfile** build pack, then set:
+
+- **Ports Exposes / container port** → `8080`
+- **Domain** → whatever you are hosting it on
+
+The platform's reverse proxy terminates TLS and forwards to container port
+8080. Two things that reliably go wrong:
+
+**Do not publish a host port.** A `ports:` mapping or an equivalent "port
+mapping" setting puts the container outside the proxy's control, and most
+platforms will then refuse to attach a domain to it. Let the proxy reach the
+container over the internal network instead.
+
+**Check the headers survive the proxy.** Your nginx sets the CSP, but the
+platform's proxy sits in front of it. After deploying, confirm it is still
+there, because a proxy that strips it silently removes the guarantee this app
+is built around:
+
+```bash
+curl -sI https://your.domain | grep -i content-security-policy
+```
+
+### As plain static files
 
 The app is four static files. Copy `public/` to your web root and you are done.
 
